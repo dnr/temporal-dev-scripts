@@ -1,0 +1,62 @@
+#!/usr/bin/env -S python3 -u
+# TODO: add color
+
+import os, sys, json, datetime
+
+short = bool(os.getenv('short'))
+
+for line in sys.stdin:
+  try:
+    e = json.loads(line)
+  except json.JSONDecodeError:
+    print(line.rstrip())
+    continue
+
+  ts = e.pop('ts')
+  if ts[-5] in '+-': ts = ts[:-2] + ':' + ts[-2:]
+  ts = datetime.datetime.fromisoformat(ts)
+  if short:
+    ts = ts.strftime('%H:%M:%S.%f')[:-3]
+  else:
+    ts = ts.strftime('%m%d %H:%M:%S.%f')[:-3]
+
+  level = e.pop('level')[0].upper()
+  stacktrace = e.pop('stacktrace', None)
+
+  msg = e.pop('msg')
+  if msg == 'none': msg = None
+
+  e.pop('address', None) # ignore
+
+  if svc := e.pop('service', None):
+    svc = {'history': '[hst]',
+           'frontend': '[fe]',
+           'matching': '[mat]',
+           'worker': '[wkr]'}.get(svc, svc)
+  if cmp := e.pop('component', None):
+    if svc:
+      svc = svc[:-1] + '/' + cmp + ']'
+    else:
+      svc = '[' + cmp + ']'
+
+  lca = e.pop('logging-call-at', None)
+
+  rest = ' '.join('%s:%s,' % p for p in sorted(e.items()))
+  if rest:
+    rest = rest.rstrip(',')
+    rest = '{' + rest + '}'
+
+  if short: level = svc = None
+  print(' '.join(filter(None, [ts, level, svc, lca, msg, rest])))
+
+  if stacktrace is not None:
+    st = stacktrace.splitlines()
+    sts = []
+    while st:
+      l = [st.pop(0).strip()]
+      while st and st[0].startswith('\t'):
+        l.append(st.pop(0).strip())
+      sts.append(l)
+    col1 = max(len(l[0]) for l in sts)
+    for l in sts:
+      print("  %*s  %s" % (-col1, l[0], ';'.join(l[1:])))
