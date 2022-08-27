@@ -1,7 +1,23 @@
 #!/usr/bin/env -S python3 -u
-# TODO: add color
 
 import os, sys, json, datetime
+
+class colors:
+  def __init__(self):
+    self.cols = dict(black=30, red=31, green=32, yellow=33, blue=34, violet=35,
+        cyan=36, white=37, blackbg=40, redbg=41, greenbg=42, yellowbg=43,
+        bluebg=44, violetbg=45, cyanbg=46, whitebg=47, grey=90, red2=91,
+        green2=92, yellow2=93, blue2=94, violet2=95, cyan2=96, white2=97,
+        bold=1, ul=4, end=0)
+  def __getattr__(self, k):
+    return f'\x1b[{self.cols[k]}m'
+
+class nocolors:
+  def __getattr__(self, k):
+    return ''
+
+C = colors() if os.isatty(1) else nocolors()
+col = lambda s, *cs: '' if not s else ''.join(cs) + s + C.end
 
 short = bool(os.getenv('short'))
 
@@ -19,8 +35,15 @@ for line in sys.stdin:
     ts = ts.strftime('%H:%M:%S.%f')[:-3]
   else:
     ts = ts.strftime('%m%d %H:%M:%S.%f')[:-3]
+  ts = col(ts, C.grey)
 
-  level = e.pop('level')[0].upper()
+  level = e.pop('level')
+  if C.black:
+    if level in ('warn',): level = col(level.upper(), C.black, C.yellowbg)
+    elif level in ('error', 'fatal'): level = col(level.upper(), C.black, C.redbg)
+    else: level = ''
+  else:
+    level = level[0].upper()
   stacktrace = e.pop('stacktrace', None)
 
   msg = e.pop('msg')
@@ -29,22 +52,27 @@ for line in sys.stdin:
   e.pop('address', None) # ignore
 
   if svc := e.pop('service', None):
-    svc = {'history': '[hst]',
-           'frontend': '[fe]',
-           'matching': '[mat]',
-           'worker': '[wkr]'}.get(svc, svc)
+    svc = svc[0].upper()
+  svccol = {'H': C.green, 'F': C.blue, 'M': C.violet, 'W': C.cyan}.get(svc, C.yellow)
   if cmp := e.pop('component', None):
     if svc:
-      svc = svc[:-1] + '/' + cmp + ']'
+      svc = svc + '/' + cmp
     else:
-      svc = '[' + cmp + ']'
+      svc = cmp
+  if C.black and svccol:
+    svc = col(svc, svccol)
+  elif svc:
+    svc = '[' + svc + ']'
 
-  lca = e.pop('logging-call-at', None)
+  lca = col(e.pop('logging-call-at', None), C.ul)
 
-  rest = ' '.join('%s:%s,' % p for p in sorted(e.items()))
+  rest = ' '.join(f'{C.blue2}{k}{C.end}:{v}{C.grey},' for (k,v) in sorted(e.items()))
   if rest:
     rest = rest.rstrip(',')
-    rest = '{' + rest + '}'
+    if C.blue2:
+      rest = rest + C.end
+    else:
+      rest = '{' + rest + '}'
 
   if short: level = svc = None
   print(' '.join(filter(None, [ts, level, svc, lca, msg, rest])))
