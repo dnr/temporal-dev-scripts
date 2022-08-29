@@ -53,6 +53,9 @@ changes. Make sure they still work, then send PRs.
 ---
 """
 # TODO: automate that rebasing procedure
+# TODO: generate rpc client wrappers in server too
+# TODO: run whatever codegen steps make sense in sdk-go
+# TODO: do stuff for internal repos too?
 
 import sys, os, argparse, subprocess
 
@@ -141,7 +144,7 @@ def go_mod_replace(pairs):
     git_ci("updating go.mod", 'go.mod', 'go.sum')
 
 def make_proto(*commit_paths):
-    run("make", "proto")
+    run('make', 'proto')
     if commit_paths:
         # use explicit paths to catch any potential new files, but try to avoid
         # deliberate untracked files that might be lying around
