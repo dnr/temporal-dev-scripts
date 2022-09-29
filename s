@@ -1,2 +1,2 @@
 #!/bin/sh
-./temporal-server ${env:+--env $env} ${zone:+--zone $zone} "${@:-start}" | jlogs
+./temporal-server --allow-no-auth ${env:+--env $env} ${zone:+--zone $zone} "${@:-start}" | jlogs
