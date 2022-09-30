@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+
+import sys, os, argparse, subprocess, re, datetime
+from pathlib import Path
+
+REPOS = ['temporal', 'docker-compose', 'helm-charts', 'version-info-service']
+ARGS = None
+
+def run(*args, **kwargs):
+    print(f"+++ {' '.join(args)}")
+    return subprocess.run(args, check=True, **kwargs)
+
+def git(*args, **kwargs):
+    return run("git", *args, **kwargs)
+
+def git_out(*args, **kwargs):
+    return git(*args, capture_output=True, **kwargs).stdout.decode()
+
+def repo_path(repo):
+    return os.path.join(ARGS.base, repo)
+
+def cd_repo(repo):
+    print(f"+++ chdir {repo}")
+    os.chdir(repo_path(repo))
+
+def find_base():
+    while os.getcwd() != '/':
+        if set(REPOS) <= set(os.listdir()):
+            return os.getcwd()
+        os.chdir('..')
+    raise Exception("can't find dir containing all repos")
+
+def is_main(b):
+    return b in ('main', 'master')
+
+def find_main():
+    out = git_out('branch', '--format', '%(refname:short) %(upstream:remotename)')
+    for line in out.splitlines():
+        try:
+            short, remote = line.split()
+            if is_main(short):
+                return short, remote
+        except ValueError:
+            pass
+    raise Exception(f"Can't find main/master branch in {os.getcwd()}")
+
+def switch_or_create(branch, initial='FETCH_HEAD'):
+    main, remote = find_main()
+    if is_main(branch): # back to normal
+        branch = main
+    if (git_out('branch', '--list', branch) or
+        git_out('branch', '--list', '--remotes', f'{remote}/{branch}')):
+        git('switch', branch)
+    else: # branch does not exist, create it
+        git('fetch', remote, main)
+        git('switch', '-c', branch, initial)
+    # always update submodules when creating/switching branches
+    git('submodule', 'update', '--init', '--recursive')
+
+def check_for_uncommitted_changes():
+    if git_out('status', '--short', '--untracked-files=no'):
+        raise Exception(f"You have uncommitted changes in {os.getcwd()}")
+
+def git_ci(msg, *paths):
+    if not paths: paths = ['-a']
+    git('commit', '-m', msg, *paths)
+
+def git_push(*branches):
+    _, remote = find_main()
+    if ARGS.nopush:
+        print("+++ would run [ git push", remote, *branches, "] in", os.getcwd())
+    else:
+        git('push', remote, *branches)
+
+def to_tuple(v):
+    m = re.match(r'(\d+)\.(\d+)\.(\d+|\*)', v)
+    a, b, c = int(m.group(1)), int(m.group(2)), m.group(3)
+    if c != '*': c = int(c)
+    return a, b, c
+
+def edit_versionchecker():
+    version_re = re.compile(r'(?<=ServerVersion = ")\d+\.\d+\.\d+(?=")')
+    p = Path('common/headers/versionChecker.go')
+    text = p.read_text('utf-8')
+    m = version_re.search(text)
+    assert m, "Can't find ServerVersion"
+    if m.group(0) != ARGS.version:
+        text = version_re.sub(ARGS.version, text)
+        p.write_text(text, 'utf-8')
+        return True
+
+def edit_dot_env():
+    version_re = re.compile(r'(?<=TEMPORAL_VERSION=)\d+\.\d+\.\d+(?=\n)')
+    p = Path('.env')
+    text = p.read_text('utf-8')
+    m = version_re.search(text)
+    assert m, "Can't find TEMPORAL_VERSION"
+    # only update if newer
+    if to_tuple(ARGS.version) > to_tuple(m.group(0)):
+        text = version_re.sub(ARGS.version, text)
+        p.write_text(text, 'utf-8')
+        return True
+
+def edit_helm_charts():
+    appversion_re = re.compile(r'(?<=\nappVersion: )\d+\.\d+\.\d+(?=\n)')
+    chartversion_re = re.compile(r'(?<=\nversion: )\d+\.\d+\.\d+(?=\n)')
+
+    chart = Path('Chart.yaml')
+    values = Path('values.yaml')
+
+    ctext = chart.read_text('utf-8')
+    m = appversion_re.search(ctext)
+    assert m, "Can't find appVersion"
+    prev_version = m.group(0)
+
+    # only update if newer
+    if to_tuple(prev_version) >= to_tuple(ARGS.version):
+        return
+
+    ctext = appversion_re.sub(ARGS.version, ctext)
+    new_chartversion = re.sub(r'^1\.', '0.', ARGS.version)
+    ctext = chartversion_re.sub(new_chartversion, ctext)
+    chart.write_text(ctext, 'utf-8')
+
+    tag_re = re.compile(rf'(?<=\n    tag: ){re.escape(prev_version)}(?=\n)')
+    vtext = values.read_text('utf-8')
+    vtext = tag_re.sub(ARGS.version, vtext)
+    values.write_text(vtext, 'utf-8')
+    return True
+
+def edit_version_info():
+    p = Path('server/config/config.yml')
+    orig_text = text = p.read_text('utf-8')
+
+    # add new version record
+    if not re.search(r'\bversion:\s*' + re.escape(ARGS.version) + r'\b', text):
+        new_section = f'''\
+  - version: {ARGS.version}
+    release_time: {datetime.datetime.utcnow().isoformat(timespec='seconds')+'Z'}
+
+'''
+        text = re.sub('\nversions:\n', r'\g<0>' + new_section, text)
+
+    # bump recommended
+    rec_re = re.compile(r'(?<=recommended_version: )(\d+\.\d+\.(?:\d+|\*))(?=\n)')
+    if m := rec_re.search(text):
+        ha, hb, _ = to_tuple(m.group(0))
+        na, nb, _ = to_tuple(ARGS.version)
+        if (na, nb) > (ha, hb):
+            text = rec_re.sub(f'{na}.{nb}.*', text)
+
+    if text != orig_text:
+        p.write_text(text, 'utf-8')
+        return True
+
+def release():
+    username = os.getlogin()
+    pr_branch = f'{username}/release-{ARGS.version}'
+
+    cd_repo('temporal')
+    check_for_uncommitted_changes()
+    minor_ver = re.sub(r'^(\d+\.\d+)\.\d+$', r'\1.x', ARGS.version) # 1.2.3 -> 1.2.x
+    release_branch = f'release/v{minor_ver}'
+    dot_zero_tag = re.sub(r'^(\d+\.\d+)\.\d+$', r'v\1.0', ARGS.version) # 1.2.3 -> v1.2.0
+    try:
+        switch_or_create(release_branch, initial=dot_zero_tag)
+    except subprocess.CalledProcessError:
+        print(f"\n===== You need to create tag {dot_zero_tag} first\n")
+        raise
+    if edit_versionchecker():
+        git_ci(f"Update version to {ARGS.version}")
+        # do not push this one automatically
+
+    cd_repo('docker-compose')
+    # TODO: if we're not bumping the version from main, we shouldn't even create a pr branch
+    check_for_uncommitted_changes()
+    switch_or_create(pr_branch)
+    if edit_dot_env():
+        git_ci(f"Update version to {ARGS.version}")
+        git_push(pr_branch)
+
+    cd_repo('helm-charts')
+    # TODO: if we're not bumping the version from main, we shouldn't even create a pr branch
+    check_for_uncommitted_changes()
+    switch_or_create(pr_branch)
+    if edit_helm_charts():
+        git_ci(f"Update version to {ARGS.version}")
+        git_push(pr_branch)
+
+    cd_repo('version-info-service')
+    check_for_uncommitted_changes()
+    switch_or_create(pr_branch, 'refactor') # TODO: use head after refactor is merged
+    if edit_version_info():
+        git_ci(f"Add version {ARGS.version}")
+        git_push(pr_branch)
+
+    print(f"========================================")
+    print(f"Next steps:")
+    print(f"1. Push the {release_branch} branch in the temporal repo")
+    print(f"     (not done automatically so you can review it)")
+    print(f"2. Wait for CI to build it and test (as described in release process doc)")
+    print(f"3. Draft and then publish github release (as described in doc)")
+    print(f"4. Create PRs in other repos:")
+    for repo in ['docker-compose', 'helm-charts', 'version-info-service']:
+        url = f'https://github.com/temporalio/{repo}/compare/{pr_branch}?expand=1'
+        print(f"     {url}")
+
+
+def main():
+    p = argparse.ArgumentParser(usage=__doc__)
+    p.add_argument('version', type=str, help="new version number")
+    p.add_argument('--base', type=str, help="parent dir of all repos")
+    p.add_argument('--nopush', action='store_true', help="don't run git push")
+    global ARGS
+    ARGS = p.parse_args()
+    if ARGS.base is None:
+        ARGS.base = find_base()
+    assert re.match(r'^\d+\.\d+\.\d+$', ARGS.version)
+    release()
+
+if __name__ == '__main__':
+    main()

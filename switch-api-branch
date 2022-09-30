@@ -100,16 +100,16 @@ def find_main():
             pass
     raise Exception(f"Can't find main/master branch in {os.getcwd()}")
 
-def switch_or_create(branch):
+def switch_or_create(branch, initial='FETCH_HEAD'):
+    main, remote = find_main()
     if is_main(branch): # back to normal
-        branch, _ = find_main()
-    if not git_out('branch', '--list', branch):
-        # branch does not exist, create it
-        main, remote = find_main()
-        git('fetch', remote, main)
-        git('switch', '-c', branch, 'FETCH_HEAD')
-    else:
+        branch = main
+    if (git_out('branch', '--list', branch) or
+        git_out('branch', '--list', '--remotes', f'{remote}/{branch}')):
         git('switch', branch)
+    else: # branch does not exist, create it
+        git('fetch', remote, main)
+        git('switch', '-c', branch, initial)
     # always update submodules when creating/switching branches
     git('submodule', 'update', '--init', '--recursive')
 
