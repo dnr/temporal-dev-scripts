@@ -189,7 +189,7 @@ def release():
 
     cd_repo('version-info-service')
     check_for_uncommitted_changes()
-    switch_or_create(pr_branch, 'refactor') # TODO: use head after refactor is merged
+    switch_or_create(pr_branch)
     if edit_version_info():
         git_ci(f"Add version {ARGS.version}")
         git_push(pr_branch)
