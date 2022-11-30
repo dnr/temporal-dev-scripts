@@ -1,0 +1,8 @@
+#!/bin/sh
+ns="${1:-default}"
+while :; do
+  wfs=$(tctl --ns $ns wf list --op --pjson --ps 100 | jq -r '.[] | .execution.workflowId')
+  [[ -z "$wfs" ]] && break
+  echo "terminating $wfs..."
+  parallel -j 30 tctl --ns $ns wf term -w -- $wfs
+done
