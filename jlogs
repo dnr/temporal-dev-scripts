@@ -30,7 +30,7 @@ for line in sys.stdin:
 
   ts = e.pop('ts')
   if ts[-5] in '+-': ts = ts[:-2] + ':' + ts[-2:]
-  ts = datetime.datetime.fromisoformat(ts)
+  ts = datetime.datetime.fromisoformat(ts.replace('Z','+00:00'))
   if short:
     ts = ts.strftime('%H:%M:%S.%f')[:-3]
   else:
