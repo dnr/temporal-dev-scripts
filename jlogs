@@ -16,7 +16,7 @@ class nocolors:
   def __getattr__(self, k):
     return ''
 
-C = colors() if os.isatty(1) else nocolors()
+C = colors() if os.isatty(1) or os.getenv('colors') else nocolors()
 col = lambda s, *cs: '' if not s else ''.join(cs) + s + C.end
 
 short = bool(os.getenv('short'))
