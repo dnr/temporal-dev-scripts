@@ -10,6 +10,9 @@ First, you'll need the following repos checked out side by side:
    |-- sdk-go    https://github.com/temporalio/sdk-go/
    \-- temporal  https://github.com/temporalio/temporal/
 
+You'll also need to run this if you haven't already, to allow local submodules:
+  git config --global protocol.file.allow always
+
 Next, pick a branch name. For example, we'll use "fig".
 
 Go into src or any of the repos.
