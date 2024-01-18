@@ -5,6 +5,7 @@ First, you'll need the following repos checked out side by side:
 
   src (name doesn't matter)
    |-- api       https://github.com/temporalio/api/
+   |-- cli       https://github.com/temporalio/cli/
    |-- api-go    https://github.com/temporalio/api-go/
    |-- sdk-go    https://github.com/temporalio/sdk-go/
    \-- temporal  https://github.com/temporalio/temporal/
@@ -25,9 +26,9 @@ Run "switch-api-branch fig". This does the following:
   - update the proto/api submodule with the latest commit in api
   - make proto
 
-- In sdk-go:
+- In sdk-go and cli:
   - switch to branch fig, creating it if necessary
-  - add or update a replace directive in go.mod for api-go
+  - add or update a replace directive in go.mod for api-go (and sdk-go for cli)
 
 - In temporal:
   - switch to branch fig, creating it if necessary
@@ -59,7 +60,7 @@ changes. Make sure they still work, then send PRs.
 
 import sys, os, argparse, subprocess
 
-REPOS = ['api', 'api-go', 'sdk-go', 'temporal']
+REPOS = ['api', 'api-go', 'sdk-go', 'cli', 'temporal']
 ARGS = None
 
 def run(*args, **kwargs):
@@ -172,6 +173,13 @@ def switch():
     switch_or_create(ARGS.branch)
     if not resetting:
         go_mod_replace([('go.temporal.io/api', repo_path('api-go'))])
+
+    cd_repo('cli')
+    check_for_uncommitted_changes()
+    switch_or_create(ARGS.branch)
+    if not resetting:
+        go_mod_replace([('go.temporal.io/api', repo_path('api-go')),
+                        ('go.temporal.io/sdk', repo_path('sdk-go'))])
 
     cd_repo('temporal')
     check_for_uncommitted_changes()
