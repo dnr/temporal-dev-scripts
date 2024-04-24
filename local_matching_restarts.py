@@ -15,7 +15,7 @@ liveprocs = []
 
 def makelog(logname):
     global _idx
-    logname = ('%05d' % _idx) + '.' + logname
+    logname = ('%03d' % _idx) + '.' + logname
     _idx += 1
     return open(os.path.join(outbase, logname), 'w', buffering=1)
 
@@ -79,28 +79,46 @@ baseconfig = {
     "dcRedirectionPolicy": { "policy": "noop" },
     "archival": { "history": { "state": "disabled" }, "visibility": { "state": "disabled", } },
     "namespaceDefaults": { "archival": { "history": { "state": "disabled" }, "visibility": { "state": "disabled" } } },
-    "dynamicConfigClient": { "filepath": "config/dynamicconfig/development-cass.yaml", "pollInterval": "10s" }
+    "dynamicConfigClient": { "filepath": "...", "pollInterval": "100s" }
     }
 
-def make_matching_config():
+basedynamicconfig = {
+    "system.enableEagerWorkflowStart": [ { "value": False } ],
+    "frontend.accessHistoryFraction": [ { "value": 1.0 } ],
+    "frontend.adminDeleteAccessHistoryFraction": [ { "value": 1.0 } ],
+    #"matching.alignMembershipChange": [ { "value" : "10s" } ],
+    #"matching.membershipUnloadDelay": [ { "value" : "500ms" } ],
+    }
+
+dcpath = lambda env: f"config/dynamicconfig/{env}.yaml"
+
+def make_matching_config(env):
     c = copy.deepcopy(baseconfig)
     c["global"]["pprof"]["port"] = nextport()
-    # prometheus will not scrape this, but it's okay because we only care about history metrics
-    c["global"]["metrics"]["prometheus"]["listenAddress"] = f"127.0.0.1:{nextport()}"
+    if env != 'rest':
+        # prometheus will not scrape this, but it's okay because we only care about history metrics
+        c["global"]["metrics"]["prometheus"]["listenAddress"] = f"127.0.0.1:{nextport()}"
     c["services"]["matching"]["rpc"]["grpcPort"] = nextport()
     c["services"]["matching"]["rpc"]["membershipPort"] = nextport()
+    c["dynamicConfigClient"]["filepath"] = dcpath(env)
     return c
 
-def server(logname, env, services, config):
+make_dynamic_config = lambda env: basedynamicconfig
+
+def server(logname, env, services):
+    config = make_matching_config(env)
+    dynamicconfig = make_dynamic_config(env)
     with open(f"config/{env}.yaml", 'w') as f:
         json.dump(config, f)
+    with open(dcpath(env), 'w') as f:
+        json.dump(dynamicconfig, f)
     return proc(
         logname, serverwd,
         ['./temporal-server', '--allow-no-auth', f'--env={env}', 'start'] +
         [f'--service={s}' for s in services])
 
-rest = lambda: server(f'rest', 'rest', ['frontend', 'history', 'worker'], baseconfig)
-matching = lambda i: server(f'matching-{i}', f'r{i}', ['matching'], make_matching_config())
+rest = lambda: server(f'rest', 'rest', ['frontend', 'history', 'worker'])
+matching = lambda i: server(f'matching-{i}', f'r{i}', ['matching'])
 
 _starter = lambda logname, rps: proc(logname, starterwd, ['go', 'run', './starter', '--rps', str(rps)])
 starter = lambda i: _starter(f'starter-{i}', 20)
@@ -114,8 +132,11 @@ def cycle():
     r = rest()
     m1 = matching(1)
     sleep(2)
+
+    # clear out old workflows
+    proc('killallworkflows', '.', ['killallworkflows']).wait()
+
     m2 = matching(2)
-    sleep(2)
     m3 = matching(3)
     ms = [None, m1, m2, m3]
 
@@ -132,19 +153,22 @@ def cycle():
     s2 = starter(2)
 
     for i in range(10):
-        log("waiting")
+        log("running")
         sleep(25)
 
         idx = random.randint(1, len(ms)-1)
         log(f"stopping matching {idx}")
-        ms[idx].terminate()
+        m = ms[idx]
+        m.terminate()
+        log(f"waiting for matching {idx}")
+        m.wait()
 
-        log(f"waiting (down one matching)")
+        log(f"running (down one matching)")
         sleep(10)
         log(f"restarting matching {idx}")
         ms[idx] = matching(idx)
 
-    log("waiting")
+    log("running")
     sleep(25)
 
     log("clearing out")
