@@ -128,7 +128,7 @@ _worker = lambda logname, pollers, tps: proc(
 worker = lambda i: _worker(f'worker-{i}', 2, 35)
 
 
-def cycle():
+def cycle_matching_restart():
     r = rest()
     m1 = matching(1)
     sleep(2)
@@ -179,9 +179,71 @@ def cycle():
     cleanup()
 
 
+def set_dc(env, updates):
+    # start from base
+    dynamicconfig = make_dynamic_config(env)
+    for key, val in updates.items():
+        if type(val) != list:
+            val = [ { "value": val } ]
+        dynamicconfig[key] = val
+    fn = dcpath(env)
+    fntmp = fn + '.tmp'
+    with open(fntmp, 'w') as f:
+        json.dump(dynamicconfig, f)
+    os.rename(fntmp, fn)
+
+
+def cycle_dynconfig():
+    r = rest()
+    m1 = matching(1)
+    sleep(2)
+
+    # clear out old workflows
+    proc('killallworkflows', '.', ['killallworkflows']).wait()
+
+    m2 = matching(2)
+    m3 = matching(3)
+    ms = [None, m1, m2, m3]
+
+    log("sleeping before worker start")
+    sleep(2)
+
+    w1 = worker(1)
+    w2 = worker(2)
+
+    log("sleeping before starter start")
+    sleep(2)
+
+    s1 = starter(1)
+    s2 = starter(2)
+
+    val = 0.5
+    for i in range(10):
+        log("running")
+
+        log("setting sample rate to", val)
+        for env in 'rest', 'r1', 'r2', 'r3':
+            set_dc(env, {
+                'system.validateUTF8.sample.rpcRequest': val,
+                'system.validateUTF8.sample.rpcResponse': val,
+                'system.validateUTF8.sample.persistence': val,
+                })
+
+        val = 0.5 - val
+
+        sleep(120)
+
+    log("clearing out")
+    s1.terminate()
+    s2.terminate()
+    sleep(5)
+
+    cleanup()
+
+
 def main():
     try:
-        cycle()
+        cycle_dynconfig()
     finally:
         cleanup()
 
