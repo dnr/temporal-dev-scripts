@@ -177,13 +177,6 @@ def switch():
     if not resetting:
         go_mod_replace([('go.temporal.io/api', repo_path('api-go'))])
 
-    cd_repo('cli')
-    check_for_uncommitted_changes()
-    switch_or_create(ARGS.branch)
-    if not resetting:
-        go_mod_replace([('go.temporal.io/api', repo_path('api-go')),
-                        ('go.temporal.io/sdk', repo_path('sdk-go'))])
-
     cd_repo('temporal')
     check_for_uncommitted_changes()
     switch_or_create(ARGS.branch)
@@ -193,6 +186,15 @@ def switch():
         go_mod_replace([('go.temporal.io/api', repo_path('api-go')),
                         ('go.temporal.io/sdk', repo_path('sdk-go'))])
         make_proto('api') # generated files are all contained in api/
+
+    cd_repo('cli')
+    check_for_uncommitted_changes()
+    switch_or_create(ARGS.branch)
+    if not resetting:
+        go_mod_replace([('go.temporal.io/api', repo_path('api-go')),
+                        ('go.temporal.io/sdk', repo_path('sdk-go')),
+                        ('go.temporal.io/server', repo_path('temporal')),
+                        ])
 
     print(f"ready to develop on branch {ARGS.branch}")
 
