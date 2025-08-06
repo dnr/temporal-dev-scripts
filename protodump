@@ -6,8 +6,8 @@ fileorstdin=()
 for arg; do
   case "$arg" in
     temporal.*.*) msg=$arg ;;
-    *) fileorstdin=($arg) ;;
+    *) fileorstdin=("$arg") ;;
   esac
 done
 
-base64 -d "${fileorstdin[@]}" | ( cd ~/t/temporal ; protoc -I=proto/internal -I=proto/dependencies -I=proto/api --decode=$msg $(find proto/internal/ -name \*.proto) )
+base64 -d "${fileorstdin[@]}" | ( cd $HOME/t/temporal ; protoc -I=proto/internal -I=$HOME/t/api --decode=$msg $(find proto/internal/ -name \*.proto) )
