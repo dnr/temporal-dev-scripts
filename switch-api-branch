@@ -161,7 +161,7 @@ def switch():
     check_for_uncommitted_changes()
     switch_or_create(ARGS.branch)
     if not resetting:
-        make_proto()
+        make_proto('openapi', 'buf.lock')
 
     cd_repo('api-go')
     check_for_uncommitted_changes()
