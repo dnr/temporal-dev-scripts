@@ -1,6 +1,9 @@
 #!/usr/bin/env -S python3 -u
 
-import os, sys, json, datetime
+import os, sys, json, datetime, signal, re
+
+signal.signal(signal.SIGQUIT, lambda _a, _b: sys.exit())
+testre = re.compile(r'^\s*(---|===) (RUN|PAUSE|CONT|PASS|FAIL|SKIP)')
 
 class colors:
   def __init__(self):
@@ -22,6 +25,13 @@ col = lambda s, *cs: '' if not s else ''.join(cs) + s + C.end
 short = bool(os.getenv('short'))
 
 for line in sys.stdin:
+  if line.startswith('    logger.go:146: {'):
+    line = line[19:]
+  elif m := testre.match(line):
+    c2 = {'PASS': C.greenbg, 'FAIL': C.redbg}.get(m.group(2), C.bluebg)
+    print(col(line.rstrip(), C.bold, c2))
+    continue
+
   try:
     e = json.loads(line)
   except json.JSONDecodeError:
@@ -49,7 +59,8 @@ for line in sys.stdin:
   msg = e.pop('msg')
   if msg == 'none': msg = None
 
-  e.pop('address', None) # ignore
+  if msg != "Created gRPC listener":
+    e.pop('address', None) # ignore
 
   if svc := e.pop('service', None):
     svc = svc[0].upper()
@@ -64,7 +75,7 @@ for line in sys.stdin:
   elif svc:
     svc = '[' + svc + ']'
 
-  lca = col(e.pop('logging-call-at', None), C.ul)
+  lca = col(os.path.basename(e.pop('logging-call-at', '')), C.ul)
 
   rest = ' '.join(f'{C.blue2}{k}{C.end}:{v}{C.grey},' for (k,v) in sorted(e.items()))
   if rest:
